@@ -33,9 +33,13 @@ def resource_busy(
     end_min: int,
     exclude_session: str | None = None,
 ) -> sqlite3.Row | None:
+    # 分项释放口径：租约只在该资源尚未释放时继续占用它。
+    # 半释放租约（status='partial'）中已释放的一项不再阻挡，未释放的一项仍然阻挡。
     col = "slot_code" if kind == "room" else "executor_code"
+    release_col = "slot_released_at" if kind == "room" else "executor_released_at"
     rows = conn.execute(
-        f"SELECT * FROM leases WHERE {col}=? AND day=? AND status='open'",
+        f"SELECT * FROM leases WHERE {col}=? AND day=? "
+        f"AND status IN ('open','partial') AND {release_col} IS NULL",
         (resource_code, day),
     ).fetchall()
     for r in rows:

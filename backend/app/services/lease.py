@@ -29,6 +29,39 @@ def _conflict_mode(conn: sqlite3.Connection) -> str:
     return row["value"] if row else "reject"
 
 
+RESOURCE_COLS = {
+    "slot": ("slot_code", "slot_released_at"),
+    "executor": ("executor_code", "executor_released_at"),
+}
+
+
+def _release_state(lease: sqlite3.Row) -> dict:
+    return {
+        "slot": lease["slot_released_at"] is not None,
+        "executor": lease["executor_released_at"] is not None,
+    }
+
+
+def _finalize(conn: sqlite3.Connection, lease_no: str) -> dict:
+    """两项资源都释放后收口：租约 closed、批窗 done、在途水位减一。
+
+    调用方须保证此前该租约尚未 closed（水位只减一次）。
+    """
+    lease = conn.execute(
+        "SELECT * FROM leases WHERE lease_no=?", (lease_no,)
+    ).fetchone()
+    conn.execute(
+        "UPDATE leases SET status='closed', closed_at=? WHERE lease_no=?",
+        (_now(), lease_no),
+    )
+    conn.execute(
+        "UPDATE windows SET status='done' WHERE code=?",
+        (lease["window_code"],),
+    )
+    open_n = _bump(conn, "open_leases", -1)
+    return {"status": "closed", "window_done": True, "open_leases": open_n}
+
+
 def open_lease(conn: sqlite3.Connection, window_code: str) -> dict:
     session = conn.execute(
         "SELECT * FROM windows WHERE code=?", (window_code,)
@@ -120,24 +153,70 @@ def open_lease(conn: sqlite3.Connection, window_code: str) -> dict:
 
 
 def close_lease(conn: sqlite3.Connection, lease_no: str) -> dict:
+    """关窗入口：一笔同时释放槽与执行器（捆绑同释，事务内原子）。
+
+    任一项已在分释入口释放过则不再重复释放，但整笔仍在同一事务里收口；
+    两项都释放后批窗结束、水位按租约减一。
+    """
     lease = conn.execute(
         "SELECT * FROM leases WHERE lease_no=?", (lease_no,)
     ).fetchone()
     if lease is None:
         raise ValueError(f"租约不存在：{lease_no}")
-    if lease["status"] != "open":
-        raise ValueError("租约不在占用态")
+    if lease["status"] == "closed":
+        raise ValueError("租约已结束")
+    now = _now()
     conn.execute(
-        "UPDATE leases SET status='closed', closed_at=? WHERE lease_no=?",
+        "UPDATE leases SET status='partial', "
+        "slot_released_at=COALESCE(slot_released_at, ?), "
+        "executor_released_at=COALESCE(executor_released_at, ?) "
+        "WHERE lease_no=?",
+        (now, now, lease_no),
+    )
+    done = _finalize(conn, lease_no)
+    return {"lease_no": lease_no, **done}
+
+
+def release_resource(
+    conn: sqlite3.Connection, lease_no: str, resource: str
+) -> dict:
+    """分释入口：只释放一项资源，另一项继续占用。
+
+    释放最后一项时才收口批窗并减水位；半释放期间状态记为 partial，
+    未释的一项仍会阻挡对应资源的新开窗。
+    """
+    if resource not in RESOURCE_COLS:
+        raise ValueError(f"未知资源项：{resource}")
+    _, release_col = RESOURCE_COLS[resource]
+    lease = conn.execute(
+        "SELECT * FROM leases WHERE lease_no=?", (lease_no,)
+    ).fetchone()
+    if lease is None:
+        raise ValueError(f"租约不存在：{lease_no}")
+    if lease["status"] == "closed":
+        raise ValueError("租约已结束")
+    if lease[release_col] is not None:
+        raise ValueError(f"{'算力槽' if resource == 'slot' else '执行器'}已释放，勿重复释放")
+
+    conn.execute(
+        f"UPDATE leases SET status='partial', {release_col}=? WHERE lease_no=?",
         (_now(), lease_no),
     )
-    conn.execute(
-        "UPDATE windows SET status='done' WHERE code=?",
-        (lease["window_code"],),
+    state = _release_state(
+        conn.execute("SELECT * FROM leases WHERE lease_no=?", (lease_no,)).fetchone()
     )
-    open_n = _bump(conn, "open_leases", -1)
+    if state["slot"] and state["executor"]:
+        done = _finalize(conn, lease_no)
+        return {"lease_no": lease_no, "released": resource, **done}
+    open_n = conn.execute(
+        "SELECT value FROM watermarks WHERE key='open_leases'"
+    ).fetchone()
     return {
         "lease_no": lease_no,
-        "status": "closed",
-        "open_leases": open_n,
+        "released": resource,
+        "status": "partial",
+        "slot_released": state["slot"],
+        "executor_released": state["executor"],
+        "window_done": False,
+        "open_leases": int(open_n["value"]) if open_n else 0,
     }

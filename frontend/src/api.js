@@ -28,4 +28,9 @@ export const api = {
     req("/leases/open", { method: "POST", body: JSON.stringify({ window_code }) }),
   closeLease: (lease_no) =>
     req("/leases/close", { method: "POST", body: JSON.stringify({ lease_no }) }),
+  releaseResource: (lease_no, resource) =>
+    req("/leases/release", {
+      method: "POST",
+      body: JSON.stringify({ lease_no, resource }),
+    }),
 };

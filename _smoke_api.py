@@ -61,6 +61,30 @@ def main() -> None:
     st, closed = call("POST", "/leases/close", {"lease_no": open1["lease_no"]})
     assert st == 200, closed
     print("closed", closed)
+
+    # 分项释放：先释槽，另一项仍占；双释后才收口并减水位
+    st, open2 = call("POST", "/leases/open", {"window_code": "W-FACT-01"})
+    assert st == 200, open2
+    lease2 = open2["lease_no"]
+    st, partial = call(
+        "POST", "/leases/release", {"lease_no": lease2, "resource": "slot"}
+    )
+    assert st == 200, partial
+    assert partial["status"] == "partial" and partial["window_done"] is False, partial
+    print("partial", partial)
+
+    st, dash_mid = call("GET", "/dashboard")
+    assert dash_mid["open_leases"] == 1, dash_mid  # 半释放不清零水位
+    assert dash_mid["partial_leases"] >= 1, dash_mid
+    assert dash_mid["holding_executors"] >= 1, dash_mid
+
+    st, finalized = call(
+        "POST", "/leases/release", {"lease_no": lease2, "resource": "executor"}
+    )
+    assert st == 200 and finalized["status"] == "closed", finalized
+    st, dash_end = call("GET", "/dashboard")
+    assert dash_end["open_leases"] == 0, dash_end
+    print("finalized", finalized)
     print("SMOKE OK")
 
 

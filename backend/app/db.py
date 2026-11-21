@@ -43,7 +43,9 @@ CREATE TABLE IF NOT EXISTS leases (
   end_min INTEGER NOT NULL,
   status TEXT NOT NULL,
   opened_at TEXT NOT NULL,
-  closed_at TEXT
+  closed_at TEXT,
+  slot_released_at TEXT,
+  executor_released_at TEXT
 );
 CREATE TABLE IF NOT EXISTS conflicts (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -91,10 +93,19 @@ def transaction():
         conn.close()
 
 
+def _migrate(conn: sqlite3.Connection) -> None:
+    """为既有库补齐分项释放列（新库由 SCHEMA 直接建出）。"""
+    cols = {r["name"] for r in conn.execute("PRAGMA table_info(leases)")}
+    for name in ("slot_released_at", "executor_released_at"):
+        if name not in cols:
+            conn.execute(f"ALTER TABLE leases ADD COLUMN {name} TEXT")
+
+
 def init_db() -> None:
     conn = connect()
     try:
         conn.executescript(SCHEMA)
+        _migrate(conn)
         conn.commit()
     finally:
         conn.close()

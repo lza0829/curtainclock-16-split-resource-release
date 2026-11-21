@@ -27,12 +27,25 @@ def dashboard():
         draft_n = conn.execute(
             "SELECT COUNT(*) c FROM windows WHERE status='draft'"
         ).fetchone()["c"]
+        # 半释放可观测：处于分项释放中、仍有未释资源的租约
+        partial_n = conn.execute(
+            "SELECT COUNT(*) c FROM leases WHERE status='partial'"
+        ).fetchone()["c"]
+        holding_slot_n = conn.execute(
+            "SELECT COUNT(*) c FROM leases WHERE status='partial' AND slot_released_at IS NULL"
+        ).fetchone()["c"]
+        holding_executor_n = conn.execute(
+            "SELECT COUNT(*) c FROM leases WHERE status='partial' AND executor_released_at IS NULL"
+        ).fetchone()["c"]
         return {
             "fixture_day": day,
             "open_leases": int(open_leases["value"]) if open_leases else 0,
             "conflict_count": int(conflicts["value"]) if conflicts else 0,
             "live_sessions": live_n,
             "draft_sessions": draft_n,
+            "partial_leases": partial_n,
+            "holding_slots": holding_slot_n,
+            "holding_executors": holding_executor_n,
         }
     finally:
         conn.close()

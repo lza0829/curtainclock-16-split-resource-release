@@ -17,6 +17,11 @@ class CloseBody(BaseModel):
     lease_no: str
 
 
+class ReleaseBody(BaseModel):
+    lease_no: str
+    resource: str
+
+
 @router.get("/leases")
 def list_leases():
     conn = connect()
@@ -24,7 +29,21 @@ def list_leases():
         rows = conn.execute(
             "SELECT * FROM leases ORDER BY id DESC"
         ).fetchall()
-        return [dict(r) for r in rows]
+        out = []
+        for r in rows:
+            item = dict(r)
+            item["slot_released"] = r["slot_released_at"] is not None
+            item["executor_released"] = r["executor_released_at"] is not None
+            item["holding"] = [
+                name
+                for name, rel in (
+                    ("slot", item["slot_released"]),
+                    ("executor", item["executor_released"]),
+                )
+                if not rel and r["status"] != "closed"
+            ]
+            out.append(item)
+        return out
     finally:
         conn.close()
 
@@ -58,5 +77,14 @@ def close_lease(body: CloseBody):
     try:
         with transaction() as conn:
             return lease_svc.close_lease(conn, body.lease_no)
+    except ValueError as e:
+        raise HTTPException(409, str(e)) from e
+
+
+@router.post("/leases/release")
+def release_resource(body: ReleaseBody):
+    try:
+        with transaction() as conn:
+            return lease_svc.release_resource(conn, body.lease_no, body.resource)
     except ValueError as e:
         raise HTTPException(409, str(e)) from e

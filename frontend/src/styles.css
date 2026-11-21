@@ -122,7 +122,7 @@ a {
 
 .stats {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
   gap: 12px;
 }
 
@@ -187,9 +187,15 @@ button:disabled {
   background: #e3ebe5;
 }
 
-.tag.live {
+.tag.live,
+.tag.open {
   background: #d8f3e4;
   color: var(--ok);
+}
+
+.tag.partial {
+  background: #fde8c8;
+  color: var(--amber);
 }
 
 .tag.draft {

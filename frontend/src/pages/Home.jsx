@@ -35,6 +35,18 @@ export default function Home() {
           待开窗
           <b>{d.draft_sessions}</b>
         </div>
+        <div className="stat">
+          半释放租约
+          <b>{d.partial_leases}</b>
+        </div>
+        <div className="stat">
+          半释放仍占槽
+          <b>{d.holding_slots}</b>
+        </div>
+        <div className="stat">
+          半释放仍占执行器
+          <b>{d.holding_executors}</b>
+        </div>
       </div>
     </section>
   );
